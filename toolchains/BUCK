@@ -1,0 +1,7 @@
+load("@xbox360//buck:toolchains.bzl", "xbox360_toolchains")
+
+# The Rust release, the console target and the host C++ linker driver all
+# come from the xbox360 cell. Project-wide rustc flags go here, for example
+# `xbox360_rustc_flags` for every crate built for the console, the
+# standard library included.
+xbox360_toolchains()

@@ -1,0 +1,15 @@
+load("@xbox360//buck:xex.bzl", "xbox360_title")
+
+# title.xex: a title that uses the standard library.
+xbox360_title(
+    name = "title",
+    srcs = glob(["src/**/*.rs"]),
+    crate_root = "src/main.rs",
+    edition = "2024",
+    link_script = "link.x",
+    manifest = "xex.toml",
+    std = True,
+    rewrite = True,
+    deps = ["//third-party/rust:xbox360"],
+    visibility = ["PUBLIC"],
+)

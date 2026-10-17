@@ -1,0 +1,15 @@
+load("@xbox360//buck:xex.bzl", "xbox360_title")
+
+# dll.xex: a DLL that a title loads into its own process. xbox360_title
+# builds any XEX; the manifest makes it a DLL.
+xbox360_title(
+    name = "dll",
+    srcs = glob(["src/**/*.rs"]),
+    crate_root = "src/main.rs",
+    edition = "2024",
+    link_script = "link.x",
+    manifest = "xex.toml",
+    rewrite = True,
+    deps = ["//third-party/rust:xbox360"],
+    visibility = ["PUBLIC"],
+)

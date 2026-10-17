@@ -1,0 +1,17 @@
+load("@xbox360//buck:xex.bzl", "xbox360_title")
+
+# system-module.xex: a module that runs in the system process. xbox360_title
+# builds any XEX; the manifest makes it a system module, and std = "system"
+# selects the standard library for one.
+xbox360_title(
+    name = "system-module",
+    srcs = glob(["src/**/*.rs"]),
+    crate_root = "src/main.rs",
+    edition = "2024",
+    link_script = "link.x",
+    manifest = "xex.toml",
+    std = "system",
+    rewrite = True,
+    deps = ["//third-party/rust:xbox360"],
+    visibility = ["PUBLIC"],
+)

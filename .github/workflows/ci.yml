@@ -1,0 +1,122 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Every platform builds every XEX with Buck2 through bin/buck2, which
+# fetches the release that toolchains/buck2 pins with DotSlash.
+#
+# On Linux and macOS, the devenv `ci` profile provides reindeer, Cargo and
+# bazel-remote. bazel-remote serves Buck2's action cache from a directory
+# that actions/cache keeps between runs: runs on main save it, and pull
+# requests read the latest one. Windows has neither Nix nor a bazel-remote
+# build, so it runs bootstrap.ps1 and builds without the action cache.
+
+jobs:
+  unix:
+    name: ${{ matrix.name }}
+    strategy:
+      # Report every platform instead of cancelling the rest on the first failure.
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86_64
+            os: ubuntu-latest
+            checks: true
+          - name: macOS arm64
+            os: macos-15
+            checks: false
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+
+      # Pulls the devenv packages from the public devenv cache.
+      - uses: cachix/cachix-action@v17
+        with:
+          name: devenv
+
+      - name: Install devenv
+        run: nix profile install nixpkgs#devenv
+
+      # Action keys cover the linker command but not the compiler driver
+      # that it runs from PATH, so each runner image keeps its own cache.
+      # actions/cache rejects paths with `..`, and the directory stays
+      # outside the Buck2 project.
+      - name: Name the action cache
+        id: action-cache
+        run: |
+          echo "prefix=buck2-action-cache-$ImageOS-$ImageVersion-${{ runner.arch }}-" >> "$GITHUB_OUTPUT"
+          echo "ACTION_CACHE_DIR=$RUNNER_TEMP/buck2-action-cache" >> "$GITHUB_ENV"
+
+      - name: Restore the Buck2 action cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.ACTION_CACHE_DIR }}
+          key: ${{ steps.action-cache.outputs.prefix }}${{ github.run_id }}
+          restore-keys: ${{ steps.action-cache.outputs.prefix }}
+
+      - name: Start the action cache
+        run: devenv --profile ci shell -- ci/start-action-cache.sh "$ACTION_CACHE_DIR"
+
+      - name: Check third-party/rust/BUCK
+        if: matrix.checks
+        run: |
+          devenv --profile ci shell -- reindeer buckify
+          git diff --exit-code
+          test -z "$(git status --porcelain)"
+
+      - name: Build
+        run: devenv --profile ci shell -- buck2 build //... --show-output
+
+      - name: Copy out the XEX files
+        if: matrix.checks
+        run: |
+          devenv --profile ci shell -- buck2 build //:title-directory --out xex/title
+          devenv --profile ci shell -- buck2 build //system-module:system-module --out xex/system-module.xex
+
+      - name: Upload the XEX files
+        if: matrix.checks
+        uses: actions/upload-artifact@v7
+        with:
+          name: xex
+          path: xex
+
+      - name: Stop the action cache
+        if: always()
+        run: |
+          devenv --profile ci shell -- buck2 kill
+          if [ -f "$ACTION_CACHE_DIR.pid" ]; then kill "$(cat "$ACTION_CACHE_DIR.pid")"; fi
+
+      - name: Save the Buck2 action cache
+        if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ env.ACTION_CACHE_DIR }}
+          key: ${{ steps.action-cache.outputs.prefix }}${{ github.run_id }}
+
+  windows:
+    name: Windows x86_64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Copy the checkout to a short path
+        shell: pwsh
+        run: ./ci/prepare-windows-runner.ps1 -Source $env:GITHUB_WORKSPACE -Destination C:\a
+
+      - name: Install DotSlash and Buck2
+        shell: pwsh
+        working-directory: C:\a
+        run: |
+          ./bootstrap.ps1
+          Add-Content -Path $env:GITHUB_PATH -Value C:\a\bin
+
+      - name: Build
+        working-directory: C:\a
+        run: buck2 build //...

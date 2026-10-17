@@ -1,0 +1,24 @@
+# The crates.io dependencies of every target in this repository. reindeer
+# reads this manifest and writes third-party/rust/BUCK, which has one alias
+# per dependency listed here: `//third-party/rust:<crate>`. Buck2 builds each
+# crate once, with the union of the features listed here.
+#
+# This package has no code. Cargo only resolves it.
+[package]
+name = "third-party"
+version = "0.0.0"
+edition = "2024"
+# The release that the xbox360 cell builds with. The resolver prefers crate
+# versions that support it.
+rust-version = "1.98"
+publish = false
+
+[lib]
+path = "lib.rs"
+
+# Dependencies of the console code. reindeer resolves their features and
+# `cfg` dependencies for the console, the `xbox360` platform of
+# reindeer.toml, rather than for the host.
+[target.'cfg(target_os = "xbox360")'.dependencies]
+xbox360 = "0.2"
+xbox360-sys = "0.2"

@@ -1,0 +1,11 @@
+# XEX metadata of dll.xex (xex-link manifest).
+#
+# TITLE and DLL: the loader maps the module into the process of the title
+# that loads it and calls its entry point with ProcessAttach. The image base
+# must match link.x and must not overlap the title or another DLL.
+load_address = 0x88000000
+module_flags = ["TITLE", "DLL"]
+version = "1.0.0.0"
+# The module has no thread-local storage. Without this key the TITLE flag
+# would give it the 64 TLS slots of a title.
+tls_slots = 0

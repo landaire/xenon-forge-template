@@ -1,0 +1,5 @@
+# XEX metadata of title.xex (xex-link manifest). Every other key keeps the
+# default of a title: module_flags = ["TITLE"], load_address = 0x82000000
+# and 64 TLS slots. Give each title its own title_id.
+title_id = 0x58580001
+version = "1.0.0.0"
