@@ -2,7 +2,7 @@
 #
 # TITLE and DLL: the loader maps the module into the process of the title
 # that loads it and calls its entry point with ProcessAttach. The image base
-# must match link.x and must not overlap the title or another DLL.
+# must not overlap the title or another DLL; the link script follows it.
 load_address = 0x88000000
 module_flags = ["TITLE", "DLL"]
 version = "1.0.0.0"

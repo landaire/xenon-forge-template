@@ -132,7 +132,6 @@ xbox360_title(
     srcs = glob(["src/**/*.rs"]),
     crate_root = "src/main.rs",
     edition = "2024",
-    link_script = "link.x",
     manifest = "xex.toml",
     rust_project = "Cargo.toml",
     std = True,
@@ -151,7 +150,7 @@ title_id = 0x58580001
 version = "1.0.0.0"
 ```
 
-The image is linked at 0x82000000, the default load address. `title/link.x` places the code at 0x82010000 because the first 64 KB hold the headers.
+The image is linked at 0x82000000, the default load address. xex-link derives the link script from `xex.toml`: code starts at 0x82010000 because the first 64 KB hold the headers. A target can set `link_script` to use its own.
 
 ### DLLs
 
@@ -195,7 +194,7 @@ module_flags = ["TITLE", "DLL"]
 tls_slots = 0
 ```
 
-Each DLL needs a non-overlapping address range, shared by `load_address` and `link.x`. `tls_slots = 0` avoids reserving the title's TLS slots. DLLs cannot export functions by ordinal, but their entry point can start threads or initialize shared state.
+Each DLL needs a non-overlapping address range, set by `load_address`. `tls_slots = 0` avoids reserving the title's TLS slots. DLLs cannot export functions by ordinal, but their entry point can start threads or initialize shared state.
 
 ### System modules
 
@@ -245,7 +244,7 @@ Do not unload a module while its code is still running. For exports and other ma
 ## Notes for all console code
 
 - `no_std` crates need a panic handler. `std` aborts after a panic.
-- Copy an example linker script so `.xthunks` and `.xvars` are placed correctly.
+- A custom `link_script` must place `.xthunks` and `.xvars` as the derived one does (`xex-link link-script link.x --manifest xex.toml` writes it).
 - `rewrite = True` optimizes register saves and restores. Its intermediate outputs are available through subtargets such as `[asm]`, `[elf]`, and `[disassembly]`.
 - Builds reject unsafe reservation instructions. Use `core` atomics or `xbox360::atomic`.
 - The [Xenon Forge README](https://github.com/landaire/xenon-forge#xex-link) lists all manifest keys.

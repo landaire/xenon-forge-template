@@ -3,7 +3,8 @@
 # DLL without TITLE: the loader maps the module into the system process,
 # where it stays when titles change. System modules are loaded at
 # 0x90000000 to 0x9fffffff on 4 KB pages, so the image has SMALL_PAGES. The
-# image base must match link.x and must not overlap another system module:
+# image base must not overlap another system module (the link script
+# follows it):
 # xbdm.xex is at 0x91f00000 and the system shell at 0x92000000.
 load_address = 0x91c00000
 image_flags = ["SMALL_PAGES"]
