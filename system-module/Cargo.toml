@@ -1,0 +1,12 @@
+[package]
+name = "system-module"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "system-module"
+path = "src/main.rs"
+
+[dependencies]
+xbox360 = "0.2"

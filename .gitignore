@@ -5,8 +5,9 @@
 /.buckconfig.local
 # DotSlash and the Buck2 it fetches (bootstrap.sh, bootstrap.ps1).
 /.tools
-# A local rust-xbox360 checkout for `xbox360 = disabled` (README).
-/rust-xbox360
+# Local external-cell checkouts for development (README).
+/xenon-forge
+/rustc-bootstrap
 # Cargo output of `reindeer buckify`.
 /target
 /third-party/rust/target

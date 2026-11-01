@@ -10,6 +10,7 @@ xbox360_title(
     edition = "2024",
     link_script = "link.x",
     manifest = "xex.toml",
+    rust_project = "Cargo.toml",
     std = "system",
     rewrite = True,
     deps = ["//third-party/rust:xbox360"],

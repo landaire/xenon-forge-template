@@ -54,30 +54,66 @@ install_dotslash() {
     printf '%s\n' "$sha256" >"$tools/bin/dotslash.sha256"
 }
 
-missing() {
-    if [ -z "${reported:-}" ]; then
-        say "Missing host tools. Buck2 does not download these:"
-        reported=1
+missing_required() {
+    if [ -z "${required_reported:-}" ]; then
+        say "Missing required host tools:"
+        required_reported=1
+    fi
+
+    required_missing=1
+    say "  $1: $2"
+}
+
+missing_optional() {
+    if [ -z "${optional_reported:-}" ]; then
+        say "Optional capabilities unavailable:"
+        optional_reported=1
     fi
 
     say "  $1: $2"
 }
 
 check_host_tools() {
-    have git || missing git "required. Buck2 fetches the xbox360 cell with git."
+    have git || missing_required git "required. Buck2 fetches external cells with git."
 
+    # Host executables: xex-link and xbox360-asm-rewrite.
     case $(uname -s) in
     Linux)
-        have c++ || missing c++ "required to link xex-link and the other host tools. Install GCC or Clang (for example g++ or gcc-c++)."
+        have c++ ||
+            missing_required c++ "required to link host executables. Install GCC or Clang (for example g++ or gcc-c++)."
         ;;
     Darwin)
         xcrun --find c++ >/dev/null 2>&1 ||
-            missing "Xcode command line tools" "required to link xex-link and the other host tools. Run xcode-select --install."
+            missing_required "Xcode command line tools" "required to link host executables. Run xcode-select --install."
         ;;
     esac
 
-    have cargo || missing cargo "optional. reindeer needs it to resolve third-party/rust/Cargo.toml."
-    have reindeer || missing reindeer "optional. Only needed after a change to third-party/rust/Cargo.toml."
+    clang --print-targets 2>/dev/null | grep -q '^ *ppc32 ' ||
+        missing_optional clang "PPC32 C titles need clang with the PowerPC target on the PATH of the Buck2 daemon."
+    python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))' 2>/dev/null ||
+        missing_required python3 "Buck build and run actions need Python 3.11 or later."
+
+    if ! have cargo || ! have rustup; then
+        missing_optional "Cargo toolchain" "Cargo builds need rustup, Cargo, Rust 1.98.0, and its rust-src component."
+    elif ! rustup toolchain list 2>/dev/null | grep -q '^1\.98\.0'; then
+        missing_optional "Rust 1.98.0" "Cargo builds need rustup toolchain install 1.98.0."
+    elif ! rustup component list --installed --toolchain 1.98.0 2>/dev/null | grep -q '^rust-src'; then
+        missing_optional rust-src "Cargo builds need rustup component add rust-src --toolchain 1.98.0."
+    fi
+
+    have reindeer ||
+        missing_optional reindeer "only regenerating third-party/rust/BUCK needs it, after a change to a Cargo.toml."
+
+    if [ "$(uname -s)-$(uname -m)" = Linux-x86_64 ]; then
+        have cc || missing_optional cc "PPC64 builds need a host C compiler."
+        have ar || missing_optional ar "PPC64 builds need binutils."
+        have ranlib || missing_optional ranlib "PPC64 builds need binutils."
+        have unzip || missing_optional unzip "PPC64 builds need unzip."
+    fi
+
+    if [ -n "${required_missing:-}" ]; then
+        fail "install the required host tools above and run bootstrap.sh again"
+    fi
 }
 
 case "$(uname -s)-$(uname -m)" in

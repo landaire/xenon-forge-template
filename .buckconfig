@@ -2,7 +2,8 @@
   root = .
   prelude = prelude
   toolchains = toolchains
-  xbox360 = rust-xbox360
+  xbox360 = xenon-forge
+  rustc_bootstrap = rustc-bootstrap
   none = none
 
 [cell_aliases]
@@ -13,15 +14,20 @@
   buck = none
 
 # The Xbox 360 target, the standard library overlay, the toolchain rules and
-# xex-link come from rust-xbox360 at a pinned commit (README, Updating the
+# xex-link come from xenon-forge at a pinned commit (README, Updating the
 # toolchain).
 [external_cells]
   prelude = bundled
   xbox360 = git
+  rustc_bootstrap = git
 
 [external_cell_xbox360]
-  git_origin = https://github.com/landaire/rust-xbox360
-  commit_hash = 5a58d7e8539b53572b37743a01971d49f3d7ec2a
+  git_origin = https://github.com/landaire/xenon-forge
+  commit_hash = f071680a455086125268992403b3c2b307afe063
+
+[external_cell_rustc_bootstrap]
+  git_origin = https://github.com/landaire-contrib/buck2-rustc-bootstrap
+  commit_hash = f75e1005adc480d93d59f1ef7ad49554f12f6020
 
 [parser]
   target_platform_detector_spec = target:root//...->prelude//platforms:default \
@@ -30,7 +36,7 @@
     target:xbox360//...->prelude//platforms:default
 
 [build]
-  execution_platforms = prelude//platforms:default
+  execution_platforms = xbox360//platforms:execution
 
 [project]
   ignore = .devenv, .direnv, .git, .jj, .tools, buck-out, target

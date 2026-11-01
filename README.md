@@ -1,12 +1,13 @@
-# rust-xbox360-template
+# Xenon Forge template
 
-A starting point for Xbox 360 software written in Rust with the [rust-xbox360](https://github.com/landaire/rust-xbox360) toolchain.
+A starting point for Xbox 360 software written in Rust with the [Xenon Forge](https://github.com/landaire/xenon-forge) toolchain.
 
 ## tl;dr
 
 - `bin/buck2 build //...` builds three XEX files: a title, a DLL that the title loads, and a system module.
+- `bin/buck2 run //title:title` deploys and launches the title on a configured devkit.
 - You don't need to install Rust or Buck2 yourself. The first build downloads everything it needs and checks each download against a pinned hash.
-- Each example is a directory with a `BUCK` file, a linker script, an `xex.toml` and Rust sources. Copy one to start your own.
+- Each example is a directory with a `BUCK` file, a linker script, an `xex.toml`, a Cargo manifest for editor support, and Rust sources. Copy one to start your own.
 - crates.io dependencies go in `third-party/rust/Cargo.toml`. Run [`reindeer buckify`](https://github.com/facebookincubator/reindeer) after you change it.
 - A Nix [devenv](https://devenv.sh) shell, bootstrap scripts for Linux, macOS and Windows, and a GitHub Actions workflow are included.
 
@@ -41,7 +42,64 @@ buck2 build //system-module:system-module --out out/system-module.xex
 
 Copy the title directory to the console and launch `default.xex`. Output from `println!` and `dbg_println!` goes to the debug output, which you can read with a debug monitor client such as [xeedee](https://github.com/landaire/xeedee).
 
-[Xenia](https://xenia.jp) runs titles too, with some gaps. Xenia does not provide `ExAllocatePoolWithTag`, which the standard library allocates with, so a title that allocates on the heap will crash. It also does not implement the `mcrf` instruction, which some of `core`'s integer formatting uses. Xenia's `--break_on_unimplemented_instructions=false` skips the instruction instead of stopping, and the results of that code are then wrong. `tools/run-xenia.sh` in the rust-xbox360 repository shows how to run a XEX headless.
+[Xenia](https://xenia.jp) runs titles too, with some gaps. Xenia does not provide `ExAllocatePoolWithTag`, which the standard library allocates with, so a title that allocates on the heap will crash. It also does not implement the `mcrf` instruction, which some of `core`'s integer formatting uses. Xenia's `--break_on_unimplemented_instructions=false` skips the instruction instead of stopping, and the results of that code are then wrong. `tools/run-xenia.sh` in the Xenon Forge repository shows how to run a XEX headless.
+
+### Deploying and debugging
+
+Configure the console that runs XBDM in `.buckconfig.local`:
+
+```ini
+[xbox360]
+  console_xbdm = deanxbox
+```
+
+Then deploy and launch the title. Arguments after `--` become its command
+line:
+
+```sh
+bin/buck2 run //title:title -- first "second argument"
+```
+
+The default remote directory is
+`DEVKIT:\<project-directory>\<target-name>`. Set `deploy_directory` under
+`[xbox360]` to override the base directory. Xenon Forge downloads
+hash-pinned `xeedee` and `openxbdm-kd` releases for supported hosts; set
+`xbdm_tool` or `kd_tool` only to override them.
+
+With kdnet enabled, `[debug]` deploys the title, starts the kernel debugger,
+holds the title before its entry point, and opens GDB:
+
+```sh
+bin/buck2 run //title:title[debug]
+```
+
+`[debug-server]` performs the same deployment and load stop but leaves the
+GDB remote server at `127.0.0.1:2159`. `[vscode]` emits a VS Code workspace
+with the deployment task, GDB launch configuration, and Rust Analyzer
+project:
+
+```sh
+code "$(bin/buck2 build //title:title[vscode] --show-simple-output)"
+```
+
+Set `console_kd_target`, `gdb_tool`, or `gdb_listen` under `[xbox360]` to
+override debugger defaults.
+
+### PPC64-ILP32
+
+The normal target uses the downloaded PPC32 Rust release. On x86_64 Linux,
+select the experimental PPC64-ILP32 platform to build the custom LLVM and
+Rust compiler, then compile the same title with it:
+
+```sh
+bin/buck2 build //title:title \
+  --target-platforms xbox360//platforms:ppc64 \
+  --show-output
+```
+
+The first PPC64 build compiles LLVM, clang, LLD, and rustc from source.
+Later builds reuse that build tree. Standalone host tools such as
+`xex-link` continue to use the downloaded host Rust release.
 
 ## The three kinds of XEX
 
@@ -101,6 +159,7 @@ xbox360_title(
     edition = "2024",
     link_script = "link.x",
     manifest = "xex.toml",
+    rust_project = "Cargo.toml",
     std = True,
     rewrite = True,
     deps = ["//third-party/rust:xbox360"],
@@ -282,7 +341,7 @@ The export table records `version`, and `xex-link` rejects a version below `min_
 - `rewrite = True` makes the image smaller. It replaces the register saves and restores in each function with calls to shared routines, as Microsoft's compiler does. The build fails if the relinked image differs from the one rustc links, or if a sequence the rewrite handles remains.
 - With `rewrite = True` a target has subtargets for the intermediate files. For example, `buck2 build //title:title[disassembly] --show-output` prints the path of the disassembly. Others are `[asm]`, `[elf]`, `[rewrite-report]` and `[refusals]`.
 - Every build fails if the image contains a reservation instruction (`lwarx`, `stwcx.`) outside the interrupt-protected form. The kernel loader reports the unprotected form. Use the atomics in `core`, which the toolchain builds in the protected form, or `xbox360::atomic`.
-- The full list of manifest keys is in the [rust-xbox360 README](https://github.com/landaire/rust-xbox360#linker-options).
+- The full list of manifest keys is in the [Xenon Forge README](https://github.com/landaire/xenon-forge#xex-link).
 
 ## Release builds
 
@@ -314,7 +373,7 @@ A few terms:
 - A *`BUCK` file* declares the targets of the directory it is in. A directory with a `BUCK` file is a *package*.
 - A *label* names a target. `//title:title` is the target `title` in the package `title/`. When a target has the name of its directory you can shorten its label, so `//title` means `//title:title`.
 - A *pattern* names many targets. `//...` is every target in this repository. `//title/...` is every target under `title/`.
-- A *cell* is a separate tree of `BUCK` files with its own name. `xbox360//` is the rust-xbox360 repository at the commit in `.buckconfig`, which Buck2 fetches with git. `prelude//` holds the standard rules such as `rust_library`, and `toolchains//` is `toolchains/` in this repository.
+- A *cell* is a separate tree of `BUCK` files with its own name. `xbox360//` is the Xenon Forge repository at the commit in `.buckconfig`, which Buck2 fetches with git. `prelude//` holds the standard rules such as `rust_library`, and `toolchains//` is `toolchains/` in this repository.
 - `load("@xbox360//buck:xex.bzl", "xbox360_title")` imports a rule from a `.bzl` file, in this case from the xbox360 cell.
 
 Buck2 runs a background process, the daemon, that keeps the build graph in memory. `buck2 kill` stops it. Run that if the build ever behaves as if it missed a change to your environment, for example after you change `PATH`.
@@ -455,7 +514,11 @@ To update a dependency, change its version in `Cargo.toml` or run `cargo update 
 powershell -ExecutionPolicy Bypass -File bootstrap.ps1
 ```
 
-Buck2 then downloads the rest: the Rust release that the xbox360 cell pins, a Python for its own tools, and every crate.
+The host must provide Git, Python 3.11 or later, and a C++ compiler; Windows
+uses MSVC and the Windows SDK. The scripts check those requirements and fail
+with the missing component. Buck2 downloads the pinned Rust release,
+hash-pinned openxbdm host tools, and Rust crates. Python is not downloaded:
+the build and run actions use the host interpreter.
 
 ### Nix devenv
 
@@ -469,9 +532,12 @@ Building the standard library takes a few minutes, so the Linux and macOS jobs k
 
 ### Updating the toolchain
 
-The toolchain is the rust-xbox360 repository at the commit in `[external_cell_xbox360]` of `.buckconfig`. To update it, set `commit_hash` to a newer commit of rust-xbox360.
+The toolchain is the Xenon Forge repository at the commit in
+`[external_cell_xbox360]` of `.buckconfig`. To update it, set `commit_hash`
+to a newer Xenon Forge commit.
 
-To build against your own checkout of rust-xbox360, put it at `rust-xbox360/` in this repository and add this to `.buckconfig.local`:
+To build against your own Xenon Forge checkout, put it at `xenon-forge/`
+in this repository and add this to `.buckconfig.local`:
 
 ```ini
 [external_cells]

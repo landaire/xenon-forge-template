@@ -82,10 +82,20 @@ function Install-DotSlash($Asset) {
     }
 }
 
-function Write-Missing($Tool, $Reason) {
-    if (-not $script:Reported) {
-        Write-Host "Missing host tools. Buck2 does not download these:"
-        $script:Reported = $true
+function Write-MissingRequired($Tool, $Reason) {
+    if (-not $script:RequiredReported) {
+        Write-Host "Missing required host tools:"
+        $script:RequiredReported = $true
+    }
+
+    $script:RequiredMissing = $true
+    Write-Host "  ${Tool}: $Reason"
+}
+
+function Write-MissingOptional($Tool, $Reason) {
+    if (-not $script:OptionalReported) {
+        Write-Host "Optional capabilities unavailable:"
+        $script:OptionalReported = $true
     }
 
     Write-Host "  ${Tool}: $Reason"
@@ -93,9 +103,10 @@ function Write-Missing($Tool, $Reason) {
 
 function Test-HostTools($Architecture) {
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-        Write-Missing "git" "required. Buck2 fetches the xbox360 cell with git."
+        Write-MissingRequired "git" "required. Buck2 fetches external cells with git."
     }
 
+    # Host executables: xex-link and xbox360-asm-rewrite.
     $component = if ($Architecture -eq "ARM64") {
         "Microsoft.VisualStudio.Component.VC.Tools.ARM64"
     }
@@ -107,24 +118,59 @@ function Test-HostTools($Architecture) {
         & $vswhere -latest -products * -requires $component -property installationPath
     }
     if (-not $vcTools) {
-        Write-Missing "MSVC build tools" "required to link xex-link and the other host tools. Install Visual Studio Build Tools with the C++ workload."
+        Write-MissingRequired "MSVC build tools" "required to link host executables. Install Visual Studio Build Tools with the C++ workload."
     }
 
     $kits = Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots" -Name KitsRoot10 -ErrorAction SilentlyContinue
     if (-not $kits) {
-        Write-Missing "Windows SDK" "required to link xex-link and the other host tools. The C++ workload of the Build Tools installs it."
+        Write-MissingRequired "Windows SDK" "required to link host executables. The C++ workload of the Build Tools installs it."
     }
 
     $fileSystem = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name LongPathsEnabled -ErrorAction SilentlyContinue
     if (-not $fileSystem -or $fileSystem.LongPathsEnabled -ne 1) {
-        Write-Missing "long paths" "required. buck-out paths exceed 260 characters. As administrator, set LongPathsEnabled to 1 under HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem."
+        Write-MissingRequired "long paths" "buck-out paths exceed 260 characters. As administrator, set LongPathsEnabled to 1 under HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem."
     }
 
-    if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
-        Write-Missing "cargo" "optional. reindeer needs it to resolve third-party\rust\Cargo.toml."
+    $clangTargets = if (Get-Command clang -ErrorAction SilentlyContinue) { & clang --print-targets }
+    if (-not ($clangTargets | Select-String -Pattern '^\s*ppc32\s' -Quiet)) {
+        Write-MissingOptional "clang" "PPC32 C titles need clang with the PowerPC target on the PATH of the Buck2 daemon."
     }
+
+    # Windows puts a python alias on PATH that only opens the Microsoft Store.
+    $pythonFound = $false
+    if (Get-Command python -ErrorAction SilentlyContinue) {
+        try {
+            & python -c "import sys; sys.exit(sys.version_info < (3, 11))" 2>$null
+            $pythonFound = $LASTEXITCODE -eq 0
+        }
+        catch {
+            $pythonFound = $false
+        }
+    }
+    if (-not $pythonFound) {
+        Write-MissingRequired "python" "Buck build and run actions need Python 3.11 or later."
+    }
+
+    $cargo = Get-Command cargo -ErrorAction SilentlyContinue
+    $rustup = Get-Command rustup -ErrorAction SilentlyContinue
+    if (-not $cargo -or -not $rustup) {
+        Write-MissingOptional "Cargo toolchain" "Cargo builds need rustup, Cargo, Rust 1.98.0, and its rust-src component."
+    }
+    else {
+        $toolchains = & rustup toolchain list 2>$null
+        if ($LASTEXITCODE -ne 0 -or -not ($toolchains | Select-String -Pattern '^1\.98\.0(?:-| |$)' -Quiet)) {
+            Write-MissingOptional "Rust 1.98.0" "Cargo builds need rustup toolchain install 1.98.0."
+        }
+        else {
+            $components = & rustup component list --installed --toolchain 1.98.0 2>$null
+            if ($LASTEXITCODE -ne 0 -or -not ($components | Select-String -Pattern '^rust-src' -Quiet)) {
+                Write-MissingOptional "rust-src" "Cargo builds need rustup component add rust-src --toolchain 1.98.0."
+            }
+        }
+    }
+
     if (-not (Get-Command reindeer -ErrorAction SilentlyContinue)) {
-        Write-Missing "reindeer" "optional. Only needed after a change to third-party\rust\Cargo.toml."
+        Write-MissingOptional "reindeer" "only regenerating third-party\rust\BUCK needs it, after a change to a Cargo.toml."
     }
 }
 
@@ -148,4 +194,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Test-HostTools $architecture
+if ($script:RequiredMissing) {
+    throw "Install the required host tools above and run bootstrap.ps1 again."
+}
 Write-Host "Run bin\buck2 in place of buck2, or add $Root\bin to PATH."
