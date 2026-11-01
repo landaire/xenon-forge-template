@@ -70,12 +70,10 @@ See Xenon Forge's [advanced usage](https://github.com/landaire/xenon-forge#advan
 
 ### PPC64-ILP32
 
-The normal target uses the downloaded PPC32 Rust release. On x86_64 Linux, select the experimental PPC64-ILP32 platform to use the custom LLVM and Rust compiler:
+The normal target uses the downloaded PPC32 Rust release. On x86_64 Linux, select the experimental PPC64-ILP32 code generation to use the custom LLVM and Rust compiler:
 
 ```sh
-bin/buck2 build //title:title \
-  --target-platforms xbox360//platforms:ppc64 \
-  --show-output
+bin/buck2 build -m ppc64-ilp32 //title:title --show-output
 ```
 
 The first PPC64 build downloads a hash-pinned LLVM and Rust toolchain. Set `ppc64_toolchain = source` under `[xbox360]` only when working on the compiler.
@@ -252,9 +250,16 @@ Do not unload a module while its code is still running. For exports and other ma
 - Builds reject unsafe reservation instructions. Use `core` atomics or `xbox360::atomic`.
 - The [Xenon Forge README](https://github.com/landaire/xenon-forge#xex-link) lists all manifest keys.
 
-## Release builds
+## Build modes
 
-Console targets are optimized and stripped by default. Enable assertions for one target with:
+Builds are in `dev` mode by default: console Rust compiles with `-Copt-level=0` and debug information. `release` optimizes for size and keeps debug information in the ELF; `release-no-symbols` drops it. The standard library is optimized in every mode. Select a mode with a modifier, which `PACKAGE` enables, or with a mode file:
+
+```sh
+bin/buck2 build -m release //title:title
+bin/buck2 build @xbox360//mode/release //title:title
+```
+
+Enable assertions for one target with:
 
 ```python
 xbox360_title(

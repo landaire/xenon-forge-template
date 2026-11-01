@@ -1,0 +1,5 @@
+load("@xbox360//buck:modes.bzl", "xbox360_modifiers")
+
+# Build modes and code generations as modifiers: `-m release`,
+# `-m ppc64-ilp32`.
+xbox360_modifiers()
