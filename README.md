@@ -78,7 +78,7 @@ bin/buck2 build //title:title \
   --show-output
 ```
 
-The first PPC64 build downloads the tested, hash-pinned LLVM and Rust toolchain archive. Set `ppc64_toolchain = source` under `[xbox360]` only when developing the compiler itself. Standalone host tools such as `xex-link` continue to use the downloaded host Rust release.
+The first PPC64 build downloads a hash-pinned LLVM and Rust toolchain. Set `ppc64_toolchain = source` under `[xbox360]` only when working on the compiler.
 
 ## The three kinds of XEX
 
@@ -94,19 +94,17 @@ All three are built with the same Buck2 macro, `xbox360_title`.
 
 ### Under the Hood
 
-`xbox360_title` compiles a Rust binary crate for `powerpc-unknown-xbox360`, links it with the linker script you pass, and converts the result to a XEX with `xex-link` and the metadata in your manifest.
-
-The kernel calls every entry point with the console calling convention. Rust code for this target saves only the low half of the registers that convention preserves. So every entry point the kernel calls goes through `xbox360::sys::bridged!`, which wraps a Rust function in an entry that preserves them:
+`xbox360_title` compiles and links the crate, then runs `xex-link`. Entry points called by the kernel must use `xbox360::sys::bridged!`:
 
 ```rust
 xbox360::sys::bridged!(#[unsafe(no_mangle)] pub _start, main);
 ```
 
-Thread start routines and anything else the kernel calls need the same treatment.
+This also applies to thread entry points.
 
 ### Titles
 
-A title is a process which takes over main execution on the console (games, apps, whatever). `title/` is a title that uses the standard library. It starts a thread, loads the DLL, and ends:
+A title owns the active title process. The example uses `std`, starts a thread, loads the DLL, and terminates:
 
 ```rust
 #![no_main]
@@ -146,7 +144,7 @@ xbox360_title(
 )
 ```
 
-`std = True` gives the crate the standard library, with `std::thread`, `std::net`, `std::fs`, allocation and `println!`. Without it the crate is `#![no_std]` and has `core`. It can use `alloc` too once it installs a `#[global_allocator]`, such as `xbox360::pool::PoolAllocator`. Use the standard library in titles when you can.
+`std = True` enables the standard library. Without it, the crate is `#![no_std]`; `alloc` is available after installing a global allocator.
 
 Its `xex.toml` needs little more than a title ID.
 
@@ -159,7 +157,7 @@ The image is linked at 0x82000000, the default load address. `title/link.x` plac
 
 ### DLLs
 
-A DLL is code that a title loads into its own process at run time. `dll/` prints a line when it is loaded and when it is unloaded:
+A DLL runs inside its title's process. The example logs its load and unload events:
 
 ```rust
 #![no_std]
@@ -183,7 +181,7 @@ extern "C" fn dll_main(_module: u32, reason: u32, _reserved: u32) -> Boolean {
 }
 ```
 
-The title loads it with `xbox360::module::load_image`, and dropping or unloading the returned image unloads the DLL:
+The title loads it with `xbox360::module::load_image`; dropping or unloading the returned image unloads the DLL:
 
 ```rust
 let result = unsafe { module::load_image(c"game:\\dll.xex", ImageFlags::DLL, None) };
@@ -199,13 +197,11 @@ module_flags = ["TITLE", "DLL"]
 tls_slots = 0
 ```
 
-Each DLL needs its own address range. It must not overlap the title or any other DLL the title loads. The same address goes in `load_address` and in `link.x`. `tls_slots = 0` keeps the 64 thread-local storage slots of a title out of the DLL.
-
-`xex-link` writes an export table only for the system modules listed under System modules below. So a DLL cannot export functions for the title to call by ordinal. It can still run code from its entry point, for example to start threads.
+Each DLL needs a non-overlapping address range, shared by `load_address` and `link.x`. `tls_slots = 0` avoids reserving the title's TLS slots. DLLs cannot export functions by ordinal, but their entry point can start threads or initialize shared state.
 
 ### System modules
 
-A system module runs in the system process rather than in a title. It stays loaded when titles change. A debug monitor such as `xbdm.xex` is one. `system-module/` uses the standard library and starts a thread when it is loaded:
+A system module runs in the system process and remains loaded across title changes. The example uses `std` and starts a worker thread:
 
 ```rust
 #![feature(xbox360_ext)]
@@ -214,8 +210,7 @@ extern "C" fn module_main(_module: u32, reason: u32, _reserved: u32) -> Boolean 
     let loaded = match DllEntryReason::from_raw(reason) {
         Some(DllEntryReason::ProcessAttach) => thread::Builder::new().spawn(worker).is_ok(),
         Some(DllEntryReason::ProcessDetach) => {
-            // SAFETY: the worker has ended, and nothing of this module runs
-            // after the entry point returns.
+            // SAFETY: the worker has stopped.
             unsafe { std::os::xbox360::release_tls_slots() };
             true
         }
@@ -226,55 +221,9 @@ extern "C" fn module_main(_module: u32, reason: u32, _reserved: u32) -> Boolean 
 }
 ```
 
-Its `BUCK` file sets `std = "system"` instead of `std = True`. That selects the standard library for system modules, which differs from a title's in two ways:
+Set `std = "system"` so standard-library threads and sockets belong to the system process rather than the active title.
 
-- `std::thread` starts threads in the system process, where they keep running when the title exits. A title's standard library starts them in the title process.
-- Sockets belong to the system rather than to the running title. They can send datagrams to, open connections with, and accept connections from any host.
-
-With `std = True`, a system module still builds and runs. Its threads then end with the title, and its sockets are the title's.
-
-#### Working in the title's context
-
-A module can mix the two contexts. With `std = "system"`, `std` works in the system context, and the `xbox360` crate reaches the title's. A thread from `xbox360::thread` starts in the title process, because it passes no process flag to the kernel. It ends when the title exits:
-
-```rust
-extern "C" fn title_worker(_argument: u32) -> u32 {
-    0
-}
-
-xbox360::thread_entry!(TITLE_WORKER = title_worker);
-
-let thread = xbox360::thread::spawn_entry(TITLE_WORKER, 0)?;
-```
-
-A socket of the title is a raw `xbox360::sys::xam` socket that passes `XnCaller::Title` to every call. Start the title's network stack for that caller once before the first socket:
-
-```rust
-use xbox360::sys::xam;
-use xbox360::sys::xam::XnCaller;
-
-let mut params = xam::XnetStartupParams::new();
-params.flags = xam::XnetStartupFlags::BYPASS_SECURITY;
-let mut data = xam::WsaData::new();
-
-// SAFETY: `params` and `data` are live locals of the types the calls take.
-let socket = unsafe {
-    xam::NetDll_XNetStartup(XnCaller::Title, &params);
-    xam::NetDll_WSAStartup(XnCaller::Title, xam::WinsockVersion::new(2, 2), &mut data);
-    xam::NetDll_socket(XnCaller::Title, xam::AddressFamily::Inet, xam::SocketType::Datagram, xam::Protocol::Udp)
-};
-```
-
-Both were tested from a system module on a development kit. The thread ran in the title process, and the datagram arrived from the console's title address.
-
-It also works the other way round. With `std = True`, `std` works in the title's context, and `xbox360::sys` reaches the system's:
-
-- `xbox360::sys::xboxkrnl::ExCreateThread` with `ThreadCreationFlags::SYSTEM_PROCESS` starts a thread in the system process. Its start routine must be a `bridged!` entry, as `_start` is.
-- A socket with `XnCaller::SystemApp` belongs to the system. It needs SOL_SOCKET option `0x5801` set to 1 with `NetDll_setsockopt` before it can reach ordinary hosts, which is what the standard library for system modules does for each socket.
-
-`std::thread` gives each thread a 256 KB stack. Memory in the system process is shared with every title, so set a smaller one with `std::thread::Builder::stack_size` where you can.
-
-The manifest:
+The manifest uses small pages and an address in the system-module range:
 
 ```toml
 load_address = 0x91c00000
@@ -282,51 +231,30 @@ image_flags = ["SMALL_PAGES"]
 module_flags = ["DLL"]
 ```
 
-System modules live between 0x90000000 and 0x9fffffff on 4 KB pages. That is why the image has `SMALL_PAGES` and why `system-module/link.x` aligns sections to 4 KB instead of 64 KB. Pick an address that no other system module uses. `xbdm.xex` is at 0x91f00000 and the system shell at 0x92000000.
+Choose an unused address between `0x90000000` and `0x9fffffff`. Keep it clear of `xbdm.xex` at `0x91f00000` and the system shell at `0x92000000`.
 
-On a development kit, `println!`, allocation, `thread_local!`, `std::thread` with `join`, `Mutex`, `sleep`, `Instant`, `std::fs`, UDP and TCP all worked in a system module, with no `tls_slots` in the manifest. Nothing in the standard library for system modules depends on the debug monitor, but it has not been tested on a retail console.
+Before unloading a `std` system module, stop its threads and call `std::os::xbox360::release_tls_slots()` as its final operation. This requires `#![feature(xbox360_ext)]`. Do not wait for worker threads from the module entry point.
 
-The standard library takes thread-local storage slots of the system process, which never exits. On a development kit, 29 slots were free after a boot, and each load of the example took 5. A module that keeps its slots runs the system out of them after a few loads, and the next load stops the console with a crash dump. So the module returns them when it unloads, with `std::os::xbox360::release_tls_slots()`, as the example does. On a development kit, the example loaded and unloaded 10 times in a row, and all 29 slots were free afterwards. The function is unstable, so the crate needs `#![feature(xbox360_ext)]`. Call it last, after every thread of the module has ended, because no thread local of the module may be used after it.
-
-Do not wait in the entry point for a thread that the module starts. On a development kit, a module that did so never finished loading, and the debug monitor stopped answering until the console restarted.
-
-The standard library makes the image larger. The example is 53 KB with it, and 28 KB as a `#![no_std]` module that does the same with the [`xbox360`](https://crates.io/crates/xbox360) crate. For a `#![no_std]` module, use `xbox360` for threads, locks, time and debug output, and [`xbox360-sys`](https://crates.io/crates/xbox360-sys) for raw kernel and XAM calls.
-
-A title cannot load a system module. `XexLoadImage` from a title fails with `STATUS_ACCESS_DENIED`. On a development kit, the debug monitor can load one for you. Copy the module to `DEVKIT:\DMEXT\` and send the XBDM command `dbgextld name=<file>`, for example with xeedee:
+A title cannot load a system module. On a development kit, copy it to `DEVKIT:\DMEXT\` and load it through XBDM:
 
 ```sh
 xeedee -H <console> file put system-module.xex 'DEVKIT:\DMEXT\system-module.xex'
 xeedee -H <console> raw 'dbgextld name=system-module.xex'
 ```
 
-The monitor holds one extension at a time. `dbgextld unload module=<handle>` unloads it, with the handle that the load printed. Do not unload a module whose threads are still running its code.
-
-A system module can export functions. Declare each export with `xbox360::sys::export!(ORDINAL, function)` and keep the `.xexports` section in the linker script. Then name the module it replaces in the manifest, which must be `xboxkrnl.exe`, `xam.xex` or `xbdm.xex`, and give it the version of that module:
-
-```toml
-version = "2.0.21256.0"
-
-[exports]
-module = "xbdm.xex"
-```
-
-The export table records `version`, and `xex-link` rejects a version below `min_version` of `[exports]`, which is 2.0.1861.0 by default. The load address of a module with exports must be a multiple of 64 KB.
+Do not unload a module while its code is still running. For exports and other manifest options, see the [Xenon Forge documentation](https://github.com/landaire/xenon-forge#xex-link).
 
 ## Notes for all console code
 
-- A `no_std` crate needs a `#[panic_handler]`. The DLL example prints the panic message and then ends the title.
-- A `std` crate aborts after a panic, with a trap. In the system process that stops the console, so the system module example installs a panic hook with `std::panic::set_hook` that prints the message and parks the thread.
-- Every linker script must keep `.xthunks` (import thunks) on executable pages and collect `.xvars` (data imports). Copy one of the examples.
-- `rewrite = True` makes the image smaller. It replaces the register saves and restores in each function with calls to shared routines, as Microsoft's compiler does. The build fails if the relinked image differs from the one rustc links, or if a sequence the rewrite handles remains.
-- With `rewrite = True` a target has subtargets for the intermediate files. For example, `buck2 build //title:title[disassembly] --show-output` prints the path of the disassembly. Others are `[asm]`, `[elf]`, `[rewrite-report]` and `[refusals]`.
-- Every build fails if the image contains a reservation instruction (`lwarx`, `stwcx.`) outside the interrupt-protected form. The kernel loader reports the unprotected form. Use the atomics in `core`, which the toolchain builds in the protected form, or `xbox360::atomic`.
-- The full list of manifest keys is in the [Xenon Forge README](https://github.com/landaire/xenon-forge#xex-link).
+- `no_std` crates need a panic handler. `std` aborts after a panic.
+- Copy an example linker script so `.xthunks` and `.xvars` are placed correctly.
+- `rewrite = True` optimizes register saves and restores. Its intermediate outputs are available through subtargets such as `[asm]`, `[elf]`, and `[disassembly]`.
+- Builds reject unsafe reservation instructions. Use `core` atomics or `xbox360::atomic`.
+- The [Xenon Forge README](https://github.com/landaire/xenon-forge#xex-link) lists all manifest keys.
 
 ## Release builds
 
-Every console build is already a release build. There is no separate debug configuration and no flag to pass. The toolchain compiles every console crate, the standard library included, with `-Copt-level=z` and one code generation unit, and strips the symbols from the image. `rewrite = True` adds fat LTO. rustc turns off debug assertions and overflow checks at any optimization level above 0, so they are off too. The XEX that `buck2 build` writes is the one you ship.
-
-To turn the checks on for one target while you develop, add a rustc flag to it in its `BUCK` file:
+Console targets are optimized and stripped by default. Enable assertions for one target with:
 
 ```python
 xbox360_title(
@@ -336,11 +264,7 @@ xbox360_title(
 )
 ```
 
-The flag turns on overflow checks too. It applies to that crate only, not to the standard library or to the crates it depends on. To change every console crate, the standard library included, pass the flags as `xbox360_rustc_flags` to `xbox360_toolchains()` in `toolchains/BUCK`. Buck2 then rebuilds the standard library with them.
-
-To optimize a target for speed instead of size, add `"-Copt-level=3"` to its `rustc_flags`. A later `-Copt-level` replaces the toolchain's.
-
-To make the XEX file smaller, set `compress = true` in its `xex.toml`. `xex-link` then compresses the image with LZX.
+Use `xbox360_rustc_flags` in `toolchains/BUCK` to change every console crate. Use `-Copt-level=3` to optimize for speed, or `compress = true` in `xex.toml` to LZX-compress the XEX.
 
 The Buck2 primer, dependency workflow, bootstrap details, and repository layout
 are in [DEVELOPING.md](DEVELOPING.md).
