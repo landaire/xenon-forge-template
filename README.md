@@ -1,23 +1,20 @@
 # Xenon Forge template
 
-A starting point for Xbox 360 software written in Rust with the [Xenon Forge](https://github.com/landaire/xenon-forge) toolchain.
-
-## tl;dr
-
-- `bin/buck2 build //...` builds three XEX files: a title, a DLL that the title loads, and a system module.
-- `bin/buck2 run //title:title` deploys and launches the title on a configured devkit.
-- You don't need to install Rust or Buck2 yourself. The first build downloads everything it needs and checks each download against a pinned hash.
-- Each example is a directory with a `BUCK` file, a linker script, an `xex.toml`, a Cargo manifest for editor support, and Rust sources. Copy one to start your own.
-- crates.io dependencies go in `third-party/rust/Cargo.toml`. Run [`reindeer buckify`](https://github.com/facebookincubator/reindeer) after you change it.
-- A Nix [devenv](https://devenv.sh) shell, bootstrap scripts for Linux, macOS and Windows, and a GitHub Actions workflow are included.
+A starting point for Xbox 360 software with the [Xenon Forge](https://github.com/landaire/xenon-forge) toolchain.
 
 ## Getting started
 
-You need a few host tools. Everything else is downloaded by the build.
+You should start by reading the [xenon-forge README](https://github.com/landaire/xenon-forge/blob/main/README.md). It covers some important info about how the toolchain works, grabs dependencies, etc.
 
-- `git`, `curl` and `tar`.
-- A C++ linker driver for the host tools of the toolchain, such as `xex-link`. Use GCC or Clang on Linux, the Xcode command line tools on macOS, or Visual Studio Build Tools with the C++ workload on Windows.
-- On Windows, long paths enabled. Buck2's output paths exceed 260 characters.
+To reiterate a couple of key points:
+
+1. We have a custom LLVM toolchain and Rust standard library modifications (if using Rust). These are **optional**.
+2. There are some parts of the toolchain written in Rust or requires additional tooling. These will be fetched and managed automatically.
+3. There are some prerequisite host tools.
+
+You should really read that doc if you decided to skip it.
+
+### Using the Toolchain
 
 Build every target:
 
@@ -27,7 +24,7 @@ bin/buck2 build //... --show-output
 
 On Windows, run `bin\buck2.cmd` in place of `bin/buck2`. You can also add `bin` to your `PATH` and run `buck2`.
 
-The first run takes a few minutes. It downloads [DotSlash](https://dotslash-cli.com), [Buck2](https://buck2.build), a Rust release, and the toolchain, and then compiles the Rust standard library for the console. Later builds reuse all of it.
+The first run takes a few minutes as it sets up tools.
 
 `--show-output` prints where each XEX was written, under `buck-out`. To copy outputs somewhere else, use `--out`:
 
@@ -38,52 +35,42 @@ buck2 build //system-module:system-module --out out/system-module.xex
 
 `//:title-directory` is a directory with the title as `default.xex` and the DLL next to it as `dll.xex`. That is the layout the title expects when it loads the DLL.
 
-### Running
+### Run and debug
 
-Copy the title directory to the console and launch `default.xex`. Output from `println!` and `dbg_println!` goes to the debug output, which you can read with a debug monitor client such as [xeedee](https://github.com/landaire/xeedee).
-
-[Xenia](https://xenia.jp) runs titles too, with some gaps. Xenia does not provide `ExAllocatePoolWithTag`, which the standard library allocates with, so a title that allocates on the heap will crash. It also does not implement the `mcrf` instruction, which some of `core`'s integer formatting uses. Xenia's `--break_on_unimplemented_instructions=false` skips the instruction instead of stopping, and the results of that code are then wrong. `tools/run-xenia.sh` in the Xenon Forge repository shows how to run a XEX headless.
-
-### Deploying and debugging
-
-Configure the console that runs XBDM in `.buckconfig.local`:
+Set the console name or IP in `.buckconfig.local`:
 
 ```ini
 [xbox360]
-  console_xbdm = deanxbox
+  console_xbdm = "deanxbox"
 ```
 
-Then deploy and launch the title. Arguments after `--` become its command
-line:
+Then deploy and launch a title:
 
 ```sh
 bin/buck2 run //title:title -- first "second argument"
 ```
 
-The default remote directory is
-`DEVKIT:\<project-directory>\<target-name>`. Set `deploy_directory` under
-`[xbox360]` to override the base directory. Xenon Forge downloads
-hash-pinned `xeedee` and `openxbdm-kd` releases for supported hosts; set
-`xbdm_tool` or `kd_tool` only to override them.
+Arguments after `--` become the title command line. Xenon Forge downloads the
+deployment tools automatically and uses
+`DEVKIT:\<project-directory>\<target-name>` by default.
 
-With kdnet enabled, `[debug]` deploys the title, starts the kernel debugger,
-holds the title before its entry point, and opens GDB:
+With kdnet enabled, use the `debug` subtarget to deploy, stop before the title
+entry point, and open GDB:
 
 ```sh
 bin/buck2 run //title:title[debug]
 ```
 
-`[debug-server]` performs the same deployment and load stop but leaves the
-GDB remote server at `127.0.0.1:2159`. `[vscode]` emits a VS Code workspace
-with the deployment task, GDB launch configuration, and Rust Analyzer
-project:
+The `vscode` subtarget emits a workspace with the deployment task, debugger
+configuration, and Rust Analyzer project:
 
 ```sh
 code "$(bin/buck2 build //title:title[vscode] --show-simple-output)"
 ```
 
-Set `console_kd_target`, `gdb_tool`, or `gdb_listen` under `[xbox360]` to
-override debugger defaults.
+See Xenon Forge's
+[advanced usage](https://github.com/landaire/xenon-forge#advanced-usage) for
+tool overrides, deployment paths, and debugger settings.
 
 ### PPC64-ILP32
 
@@ -105,11 +92,11 @@ Later builds reuse that build tree. Standalone host tools such as
 
 The examples offer three different kinds of XEX setups, defined by its `module_flags` key of `xex.toml`.
 
-| Kind | Example | `module_flags` | Loaded by | Runs in | Entry point |
-| --- | --- | --- | --- | --- | --- |
-| Title | `//title:title` | `["TITLE"]` | The dashboard or another title | Title address space| `_start(context)`, never returns |
-| DLL | `//dll:dll` | `["TITLE", "DLL"]` | A title, with `XexLoadImage` | The title process | `_start(module, reason, reserved)` |
-| System module | `//system-module:system-module` | `["DLL"]` | The system, at boot or on request | The system process | `_start(module, reason, reserved)` |
+| Kind          | Example                         | `module_flags`     | Loaded by                         | Runs in             | Entry point                        |
+| ------------- | ------------------------------- | ------------------ | --------------------------------- | ------------------- | ---------------------------------- |
+| Title         | `//title:title`                 | `["TITLE"]`        | The dashboard or another title    | Title address space | `_start(context)`, never returns   |
+| DLL           | `//dll:dll`                     | `["TITLE", "DLL"]` | A title, with `XexLoadImage`      | The title process   | `_start(module, reason, reserved)` |
+| System module | `//system-module:system-module` | `["DLL"]`          | The system, at boot or on request | The system process  | `_start(module, reason, reserved)` |
 
 All three are built with the same Buck2 macro, `xbox360_title`.
 
@@ -362,7 +349,6 @@ The flag turns on overflow checks too. It applies to that crate only, not to the
 To optimize a target for speed instead of size, add `"-Copt-level=3"` to its `rustc_flags`. A later `-Copt-level` replaces the toolchain's.
 
 To make the XEX file smaller, set `compress = true` in its `xex.toml`. `xex-link` then compresses the image with LZX.
-
 
 The Buck2 primer, dependency workflow, bootstrap details, and repository layout
 are in [DEVELOPING.md](DEVELOPING.md).
