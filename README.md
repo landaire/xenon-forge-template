@@ -50,33 +50,27 @@ Then deploy and launch a title:
 bin/buck2 run //title:title -- first "second argument"
 ```
 
-Arguments after `--` become the title command line. Xenon Forge downloads the
-deployment tools automatically and uses
-`DEVKIT:\<project-directory>\<target-name>` by default.
+Arguments after `--` become the title command line. Xenon Forge downloads the [deployment tools](https://github.com/landaire/openxbdm) automatically and uses `DEVKIT:\<project-directory>\<target-name>` by default.
 
-With kdnet enabled, use the `debug` subtarget to deploy, stop before the title
-entry point, and open GDB:
+With kdnet enabled, use the `debug` subtarget to deploy, stop before the title entry point, and open GDB:
 
 ```sh
 bin/buck2 run //title:title[debug]
 ```
 
-The `vscode` subtarget emits a workspace with the deployment task, debugger
-configuration, and Rust Analyzer project:
+The same debugger subtargets work for `xbox360_c_title` C and C++ targets.
+The `vscode` subtarget emits a workspace with the deployment task and debugger
+configuration, adding a Rust Analyzer project for Rust targets:
 
 ```sh
 code "$(bin/buck2 build //title:title[vscode] --show-simple-output)"
 ```
 
-See Xenon Forge's
-[advanced usage](https://github.com/landaire/xenon-forge#advanced-usage) for
-tool overrides, deployment paths, and debugger settings.
+See Xenon Forge's [advanced usage](https://github.com/landaire/xenon-forge#advanced-usage) for tool overrides, deployment paths, and debugger settings.
 
 ### PPC64-ILP32
 
-The normal target uses the downloaded PPC32 Rust release. On x86_64 Linux,
-select the experimental PPC64-ILP32 platform to build the custom LLVM and
-Rust compiler, then compile the same title with it:
+The normal target uses the downloaded PPC32 Rust release. On x86_64 Linux, select the experimental PPC64-ILP32 platform to use the custom LLVM and Rust compiler:
 
 ```sh
 bin/buck2 build //title:title \
@@ -84,9 +78,7 @@ bin/buck2 build //title:title \
   --show-output
 ```
 
-The first PPC64 build compiles LLVM, clang, LLD, and rustc from source.
-Later builds reuse that build tree. Standalone host tools such as
-`xex-link` continue to use the downloaded host Rust release.
+The first PPC64 build downloads the tested, hash-pinned LLVM and Rust toolchain archive. Set `ppc64_toolchain = source` under `[xbox360]` only when developing the compiler itself. Standalone host tools such as `xex-link` continue to use the downloaded host Rust release.
 
 ## The three kinds of XEX
 
